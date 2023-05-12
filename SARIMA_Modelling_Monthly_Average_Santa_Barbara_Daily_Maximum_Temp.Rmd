@@ -1,0 +1,346 @@
+---
+title: "SARIMA Modelling of Monthly Average of Santa Barbara Municiple Airport Daily Maximum Temperature in Fahrenheit from 1941-2021"
+author: "Meredith Johnson"
+output:
+  pdf_document:
+    includes:
+      in_header: "wrap-code.tex"
+  html_document: default
+---
+```{r setup}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+$\LARGE{\textbf{Abstract}}$
+
+The goal of this project is to accurately predict the average daily maximum temperature around Goleta, California of the last 12 months of the given data set containing daily maximum temperatures from the Santa Barbara Municipal Airport in California from 1941-2021 in order to confidently predict the average daily maximum temperature of future months. I use a SARIMA model to model this data set and forecast monthly average temperatures. ACF and PACF plots are used in order to create candidate models and the AIC criterion and diagnostic tests are used to choose the best model. A sufficient model is obtained; however, forecasted predictions are not consistently accurate and an alternative method for obtaining more accurate predictions is proposed.
+
+$\LARGE{\textbf{Introduction}}$
+
+Access to weather predictions is essential to the majority of industries as well as the daily life of an average person. I personally check the weather forecast everyday in order to choose appropriate clothing; this inspired me to analyze local temperature data. From the National Centers for Environmental Information, National Oceanic and Atmospheric Administration website, I downloaded a data set containing daily maximum temperatures from the Santa Barbara Municipal Airport in California from 1941-2021. I then averaged the temperatures of each day to obtain monthly average maximum temperatures. I used a SARIMA model, the programming language R, and the Rstudio Integrated Development Environment to model this data set and forecast monthly average maximum temperatures. ACF and PACF plots are used in order to create candidate models and the AIC criterion is used in order to narrow down the best candidate models for diagnostic checking. Histograms, Shapiro-Wilk normality tests, Box-Pierce tests, Box-Ljung tests, and Mcleod-Li tests, Autoregressive residual fitting, residuals plots, Q-Q plots, acf and pacf of the residuals, and acf of the residuals squared are used in model diagnostics. The chosen model is sufficient in regard to all of these diagnostics except for the Mcleod-Li test and the relatively large residual sample mean returned by the autoregressive residual fitting. I believe the model to be sufficient; however, I would use a slightly different technique to forecast future predictions in order to obtain more consistently accurate predictions.
+
+$\LARGE{\textbf{Data Cleaning}}$
+
+```{r}
+library(dplyr)
+
+temp.date = read.csv("/Users/merej/Downloads/W22_Pstat_174/Final_Project/SBDailyMaxTemp.csv") %>% #read in CSV file
+  select(DATE, TMAX) %>% #select only the date and daily maximum temperature variables
+  mutate(DATE = substr(DATE, 1, 7)) %>% #mutate the date variable to only contain year and month
+  group_by(DATE) %>% #group the data set by month
+  summarise(MonthlyAverageDailyMaximumTemperature = mean(na.omit(TMAX))) #take the average of the temperatures belonging to each month
+temp = unlist(temp.date[2])
+head(temp.date)
+```
+
+
+$\LARGE{\textbf{Exploratory Analysis}}$
+
+```{r}
+#zoomed in plot
+plot.ts(temp[c(1: 120)], main = "", ylab = "Average Maximum Temperature")
+#Add title in two lines so it doesn't get cut off when knit to pdf
+title(main = c("Timeseries of Monthly Average of Santa Barbara Municiple Airport", "Daily Maximum Temperature 120 observations"), line = c(1, 2))
+
+#plot containing all observations
+plot.ts(temp, main = "", ylab = "Average Maximum Temperature")
+#Add title
+title(main = c("Timeseries of Monthly Average of Santa Barbara Municiple Airport", "Daily Maximum Temperature with Mean and Trend Line"), line = c(1, 2))
+#add trend
+temp.fit <- lm(temp ~ as.numeric(1:length(temp)))
+abline(temp.fit, col = "red")
+#add mean
+abline(h = mean(temp), col = "blue")
+
+#plot using years
+temp.years <- ts(temp, start = c(1941,1), end = c(2021,12), frequency = 12)
+ts.plot(temp.years, main = "", xlab = "Years", ylab = "Average Maximum Temperature")
+#Add title
+title(main = c("Timeseries of Monthly Average of Santa Barbara Municiple Airport", "Daily Maximum Temperature with Years Labeled"), line = c(1, 2))
+```
+The first plot depicts the seasonality of the data set: the average maximum temperature appears to follow a 12 observation pattern which corresponds to a year. The second plot depicts an overall mean of just below 70 degrees Fahrenheit and a slightly upwards trend. The third plot includes years in the x-axis. There appears to be several sharp changes in behavior. Notable sharp changes include one around 1950 and one around 2007.
+
+```{r}
+#Partition data set to two parts for model training and model validation
+#training data
+temp.train = temp[c(1:928)] #all observations but the last 12
+#test data
+temp.test = temp[c(929:940)] #only the last 12 observations
+```
+
+```{r}
+#plot training data
+plot.ts(temp.train, main = "Timeseries of Monthly Average Temperature Training Set")
+temp.train.fit <- lm(temp.train ~ as.numeric(1:length(temp.train)));
+abline(temp.train.fit, col="red")
+abline(h=mean(temp.train), col="blue")
+
+#plot histogram
+hist(temp.train, col="light blue", xlab="", main = "Histogram of Monthly Average Temperature Training Set")
+
+#plot acf
+acf(temp.train,lag.max=40, main="ACF of Monthly Average Temperature Training Set")
+```
+The histogram appears to be approximately normal which is an indicator that the data is stationary (has constant variance); therefore, implementing variance-stabilizing transformations is most likely unnecessary. The acf plot depicts seasonality with a period of 12 which indicates that we should difference the data at lag 12 in order to further analyze the data.
+
+$\LARGE{\textbf{Transformations}}$
+```{r}
+#choose lambda for boxcox transformation
+#graph to choose parameter lambda of the Box-Cox transformation for data set temp.train:
+library(MASS)
+bcTransform <- boxcox(temp.train ~ as.numeric(1:length(temp.train)))
+
+#value of lambda
+lambda = bcTransform$x[which(bcTransform$y == max(bcTransform$y))]
+lambda
+
+#perform boxcox and log transformations
+temp.train.bc = (1/lambda)*(temp.train^lambda-1)
+temp.train.log <- log(temp.train)
+
+#plot not transformed, boxcox, and log transformed data
+plot.ts(temp.train, main = 'Timeseries of Monthly Average Temperature Training Set')
+
+plot.ts(temp.train.bc, main = '')
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "after Boxcox Transformation"), line = c(1, 2))
+
+plot.ts(temp.train.log, main = '')
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "after Log Transformation"), line = c(1, 2))
+
+#histograms for not transformed, boxcox, and log transformed data
+hist(temp.train, col="light blue", xlab="", main = "Histogram of Monthly Average Temperature Training set", probability = TRUE)
+curve(dnorm(x, mean(temp.train), sd(temp.train)), add = TRUE)
+
+hist(temp.train.bc, col="light blue", xlab="", main="", probability = TRUE)
+curve(dnorm(x, mean(temp.train.bc), sd(temp.train.bc)), add = TRUE)
+title(main = c("Histogram of Monthly Average Temperature Training Set", "after Boxcox Transformation"), line = c(1, 2))
+
+hist(temp.train.log, col="light blue", xlab="", main="", probability = TRUE)
+curve(dnorm(x, mean(temp.train.log), sd(temp.train.log)), add = TRUE)
+title(main = c("Histogram of Monthly Average Temperature Training Set", "after Log Transformation"), line = c(1, 2))
+```
+All of the histograms appear approximately normal; therefore, I choose to model the not transformed data.
+
+```{r}
+# plot the decomposition of not transformed data
+y = ts(as.ts(temp.train), frequency = 12)
+decomp = decompose(y)
+plot(decomp)
+
+# plot the decomposition of boxcox transformed data
+y = ts(as.ts(temp.train.bc), frequency = 12)
+decomp = decompose(y)
+plot(decomp)
+
+# plot the decomposition of log transformed data
+y = ts(as.ts(temp.train.log), frequency = 12)
+decomp = decompose(y)
+plot(decomp)
+```
+There appears to be a trend but it does not look to be modelable by a polynomial. There seems to be a seasonal pattern. The variance in the random plot for the not transformed, boxcox, and log transformed data appears to increase between 40 and 60; however the increase is not large and the variance remains constant before and after the increase.
+
+$\LARGE{\textbf{Differencing}}$
+```{r}
+#time series plot with trend and mean for not differenced data
+plot.ts(temp.train, main = "Timeseries of Monthly Average Temperature Training Set")
+temp.train.fit <- lm(temp.train ~ as.numeric(1:length(temp.train)));
+abline(temp.train.fit, col="red")
+abline(h=mean(temp.train), col="blue")
+
+#time series plot with trend and mean for differenced at lag 12 data
+temp_12 = diff(temp.train, lag = 12)
+plot.ts(temp_12, main = "")
+temp_12.fit = lm(temp_12 ~ as.numeric(1:length(temp_12)))
+abline(temp_12.fit, col = "red")
+abline(h = mean(temp_12), col="blue")
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "Differenced at Lag 12"), line = c(1, 2))
+
+#time series plot with trend and mean for differenced at lag 12 and 1 data
+temp_12_1 = diff(temp_12, lag = 1)
+plot.ts(temp_12_1, main = "")
+temp_12_1.fit = lm(temp_12_1 ~ as.numeric(1:length(temp_12_1)))
+abline(temp_12_1.fit, col = "red")
+abline(h = mean(temp_12_1), col="blue")
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "Differenced at Lag 12 and Lag 1"), line = c(1, 2))
+
+#means of not differenced, differenced at lag 12, and differenced at lag 12 and 1 data
+print(paste("Monthly Average Temperature Training Set Mean:", mean(temp.train)))
+print(paste("Monthly Average Temperature Training Set Differenced at Lag 12 Mean:", mean(temp_12)))
+cat("Monthly Average Temperature Training Set Differenced at Lag 12 and Lag 1 Mean:", mean(temp_12_1), sep="\n")
+
+#variances of not differenced, differenced at lag 12, and differenced at lag 12 and 1 data
+print(paste("Monthly Average Temperature Training Set Variance:", var(temp.train)))
+cat("Monthly Average Temperature Training Set Differenced at Lag 12 Variance:", var(temp_12), sep="\n")
+cat("Monthly Average Temperature Training Set Differenced at Lag 12 and Lag 1 Variance:", var(temp_12_1), sep="\n")
+
+```
+We first difference at lag 12 because the data is periodic in groups of 12 and then again at lag 1 because there is no apparent seasonality other than in groups of 12. Differencing at lag 12 significantly decreases the variance and moves the mean significantly closer to 0; differencing at lag 12 and 1 increases the variance and moves the mean slightly closer to 0 compared to the data set differenced only at lag 12. Therefore, I choose to only difference at lag 12 in order to maintain low variance, avoid over-differencing, and make the data stationary.
+
+$\LARGE{\textbf{Model Identification}}$
+```{r}
+#plot acf for data differenced at lag 12
+acf(temp_12,lag.max=60, main="")
+title(main = c("ACF of Monthly Average Temperature Training Set", "Differenced at Lag 12"), line = c(1, 2))
+
+#plot pacf for data differenced at lag 12
+pacf(temp_12,lag.max=60, main="")
+title(main = c("PACF of Monthly Average Temperature Training Set", "Differenced at Lag 12"), line = c(1, 2))
+
+```
+There are spikes in the acf at lags 0, 1, 2, 4, 10, 11, 12, 13, and 24; and spikes in the pacf at lags 1, 2, 4, 10, 12, 13, 24, 25, 36, 37, 45, 47 and 48. In the context of SARIMA models, the non-seasonal difference component d = 0 and the seasonal difference component D = 1 because the data is differenced only at lag 12. Candidate values for the non-seasonal AR component include p = 1, 2, 3, 13, 25, and 37; candidate values for the non-seasonal MA component include q = 0, 1, 2, 4, 10, 11, and 13; candidate values for the seasonal AR component include P = 1, 2, 3, 4; and candidate values for the seasonal MA component include Q = 1, 2. All combinations of p = 1, 2, 3, 13; q = 0, 1, 2, 4, 10, 11, 13; P = 1, 2, 3, 4; and Q = 1, 2 were evaluated. The five models possessing the lowest AICs are displayed.
+
+```{r}
+fit.i = arima(x = temp.train, order = c(13, 0, 0), seasonal = c(2, 1, 1, period = 12), method = "ML")
+fit.i
+
+fit.ii = arima(x = temp.train, order = c(13, 0, 2), seasonal = c(4, 1, 2, period = 12), method = "ML")
+fit.ii
+
+fit.iii = arima(x = temp.train, order = c(13, 0, 0), seasonal = c(2, 1, 2, period = 12), method = "ML")
+fit.iii
+fit.iii.0 = arima(x = temp.train, order = c(13, 0, 0), seasonal = c(2, 1, 2, period = 12), fixed = c(NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, NA, 0, NA, NA, NA), method = "ML")
+fit.iii.0
+
+fit.iv = arima(x = temp.train, order = c(13, 0, 1), seasonal = c(2, 1, 1, period = 12), method = "ML")
+fit.iv
+
+```
+The first coefficient for the SAR component pertaining to fit.iii possesses a confidence interval that includes 0. I fix the first coefficient for the SAR component of that model to 0 in an attempt to lower the AIC of that model and name the new model fit.iii.0. The new model does have a lower AIC. The models that possess the lowest AICs are fit.i and fit.iii.0.
+
+$\LARGE{\textbf{Diagnostic Checking}}$
+```{r}
+#install.packages("UnitCircle")
+library(UnitCircle)
+
+par(mfrow = c(2, 2))
+#fit.i AR
+uc.check(pol_ = c(1, 0.5513, 0.4573, 0.5310, 0.5008, 0.5618, 0.4689, 0.5032, 0.5793, 0.4978, 0.4649, 0.3897, -0.2662, -0.0802), plot_output = TRUE)
+#fit.i SAR
+uc.check(pol_ = c(1, 0.1264, 0.1505), plot_output = TRUE)
+#fit.i SMA
+uc.check(pol_ = c(1, -0.3664), plot_output = TRUE)
+
+par(mfrow = c(2, 2))
+#fit.iii.0 AR
+uc.check(pol_ = c(1, 0.5496, 0.4560, 0.5307, 0.4988, 0.5614, 0.4682, 0.5023, 0.5796, 0.4955, 0.4625, 0.3868, -0.2624, -0.0799), plot_output = TRUE)
+#fit.iii.0 SAR
+uc.check(pol_ = c(1, 0, 0.1755), plot_output = TRUE)
+#fit.iii.0 SMA
+uc.check(pol_ = c(1, -0.4886, 0.0898), plot_output = TRUE)
+
+```
+If the roots of the AR and SAR polynomials of a model lie outside of the unit circle, then that model is stationary. If the roots of the MA and SMA polynomials of a model lie outside of the unit circle, then that model is invertible. All of the roots for all of the components of both fit.i and fit.iii lie outside of the unit circle, therefore, both models are stationary and invertible. No MA component is checked for either model because neither model possesses an MA component.
+
+Tests include Shapiro-Wilk normality test, Box-Pierce test, Box-Ljung test, and Mcleod-Li for normality, correlation (linear dependence), and nonlinear relationships between the residuals. Lag = 31 because $\sqrt{n} \approx 31$.
+```{r}
+#fit.i
+res.i = residuals(fit.i)
+hist(res.i,density=20,breaks=20, col="blue", xlab="", prob=TRUE, main = "Histogram of Residuals Belonging to fit.i")
+curve(dnorm(x, mean(res.i), sd(res.i)), add=TRUE )
+
+plot.ts(res.i, main = "Timeseries of Residuals Belonging to fit.i")
+res.i.fit <- lm(res.i ~ as.numeric(1:length(res.i)))
+abline(res.i.fit, col="red")
+abline(h=mean(res.i.fit), col="blue")
+
+qqnorm(res.i,main= "Normal Q-Q Plot for fit.i")
+qqline(res.i,col="blue")
+
+acf(res.i, lag.max=40, main = "ACF of Residuals Belonging to fit.i")
+pacf(res.i, lag.max=40, main = "PACF of Residuals Belonging to fit.i")
+
+shapiro.test(res.i)
+Box.test(res.i, lag = 31, type = c("Box-Pierce"), fitdf = 16)
+Box.test(res.i, lag = 31, type = c("Ljung-Box"), fitdf = 16)
+Box.test(res.i^2, lag = 31, type = c("Ljung-Box"), fitdf = 0)
+
+acf(res.i^2, lag.max=40, main = "ACF of Residuals Belonging to fit.i Squared")
+ar(res.i, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+```
+The histogram of the residuals is approximately normally distributed. fit.i passes the Shapiro-Wilk normality test, Box-Pierce test, and Box-Ljung test with a p-value > 0.05 ; however, it does not pass the Mcleod-Li test for autoregressive conditional heteroskedasticity. This may be due to the slight increase in variance referenced earlier in the decomposition of the data or due to the sharp changes in behavior referenced in the exploratory analysis. The residuals follow an AR(0) process with a sample mean of 6.67, which would ideally be close to 0. The graph of the residuals appears stationary with a mean of 0. The Q-Q Plot is approximately a straight line which is an indication of normality. The ACF of the residuals, PACF of the residuals, and ACF of the residuals squared posses lags slightly outside of the confidence interval; Bartlett's theorem states that confidence intervals provided by R are very conservative. Since the lags are only slightly outside of the confidence interval, we may take them to resemble Gaussian White noise.
+
+```{r}
+#fit.iii.0
+res.iii.0 = residuals(fit.iii.0)
+hist(res.iii.0,density=20,breaks=20, col="blue", xlab="", prob=TRUE, main = "Histogram of Residuals Belonging to fit.iii.0")
+curve(dnorm(x, mean(res.iii.0), sd(res.iii.0)), add=TRUE )
+
+plot.ts(res.iii.0, main = "Timeseries of Residuals Belonging to fit.iii.0")
+res.iii.0.fit <- lm(res.iii.0 ~ as.numeric(1:length(res.iii.0)))
+abline(res.iii.0.fit, col="red")
+abline(h=mean(res.iii.0.fit), col="blue")
+
+qqnorm(res.iii.0,main= "Normal Q-Q Plot for fit.iii.0")
+qqline(res.iii.0,col="blue")
+
+acf(res.iii.0, lag.max=40, main = "ACF of Residuals Belonging to fit.iii.0")
+pacf(res.iii.0, lag.max=40, main = "PACF pf Residuals Belonging to fit.iii.0")
+
+shapiro.test(res.iii.0)
+Box.test(res.iii.0, lag = 31, type = c("Box-Pierce"), fitdf = 16)
+Box.test(res.iii.0, lag = 31, type = c("Ljung-Box"), fitdf = 16)
+Box.test(res.iii.0^2, lag = 31, type = c("Ljung-Box"), fitdf = 0)
+
+acf(res.iii.0^2, lag.max=40, main = "ACF of Residuals Belonging to fit.iii.0 Squared")
+ar(res.iii.0, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+```
+The histogram of the residuals is approximately normally distributed. fit.iii.0 passes the Box-Pierce test and Box-Ljung test with a p-value > 0.05 ; however, it does not pass the Shapiro-Wilk normality test and Mcleod-Li test for autoregressive conditional heteroskedasticity. This may be due to the slight increase in variance referenced earlier in the decomposition of the data, the sharp changes in behavior referenced in the exploratory analysis, or the model fitting the data poorly. The residuals follow an AR(0) process with a sample mean of 6.667, which would ideally be close to 0. The graph of the residuals appears stationary with a mean of 0. The Q-Q Plot is approximately a straight line however, it is less straight than that of fit.i. The ACF of the residuals, PACF of the residuals, and ACF of the residuals squared posses lags slightly outside of the confidence interval; Bartlett's theorem states that confidence intervals provided by R are very conservative. Since the lags are only slightly outside of the confidence interval, we may take them to resemble Gaussian White noise.
+
+fit.i appears to be the better fitting model on account of it's ability to pass the Shapiro-Wilk normality test and Q-Q Plot forming a slightly straighter line than that of fit.iii.0 (normally distributed residuals). Both the chosen model, fit.i, and the model possesing the second highest AIC consist of AR, MA, SAR, and SMA components suggested by the ACF and PACF; however, neither of these models posses an MA component and I would have assumed that the models with the lowest AIC posses an MA component due to the results of the ACF. 
+
+fit.i in algebraic form: $(1+0.5513B+0.4573B^2+0.5310B^3+0.5008B^4+0.5618B^5+0.4689B^6+0.5032B^7+0.5793B^8+0.4978B^9+0.4649B^{10}+0.3897B^{11}-0.2662B^{12}-0.0802B^{13})(1+0.1264B^{12}+0.1505B^{24})X_t = (1-0.3664B^{12})Z_t$
+
+I conclude from the analysis of residuals that my model is satisfactory but not ideal due to its inability to pass the Mcleod-Li test, for autoregressive conditional heteroskedasticity, its large residual sample mean of 6.67, and its sufficient performance regarding all other diagnostic criteria.
+
+
+$\LARGE{\textbf{Forecasting}}$
+```{r}
+#install.packages("forecast")
+library(forecast)
+head(forecast(fit.i))
+```
+
+```{r}
+pred <- predict(fit.i, n.ahead = 12) #predict the average daily maximum temperature of the next 12 months
+U = pred$pred + 2*pred$se #% upper bound of prediction interval calculation
+L = pred$pred - 2*pred$se #% lower bound calculation
+ts.plot(temp.train, xlim=c(1,length(temp.train)+12), ylim = c(min(temp.train),max(U)), main = "") #plot training data
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "and Prediction of Average Temperature for 12 More Months"), line = c(1, 2))
+lines(U, col="blue", lty="dashed") #% upper bound of prediction interval
+lines(L, col="blue", lty="dashed") #% lower bound
+points((length(temp.train)+1):(length(temp.train)+12), pred$pred, col="red") #plot predictions
+```
+
+```{r}
+#time series prediction plot without test data
+ts.plot(temp.train, xlim = c(850,length(temp.train)+12), ylim = c(60,max(U)), main = "")
+title(main = c("Timeseries of Monthly Average Temperature Training Set", "and Prediction of Average Temperature for 12 More Months"), line = c(1, 2))
+lines(U, col="blue", lty="dashed") #% upper bound of prediction interval
+lines(L, col="blue", lty="dashed") #% lower bound
+points((length(temp.train)+1):(length(temp.train)+12), pred$pred, col="red")
+
+#time series prediction plot with time series test data
+ts.plot(temp, xlim = c(850,length(temp.train)+12), ylim = c(60,max(U)), main = "")
+title(main = c("Timeseries of Monthly Average Temperature Complete Set", "and Prediction of Monthly Average Temperature Test Set"), line = c(1, 2))
+lines(U, col="blue", lty="dashed")
+lines(L, col="blue", lty="dashed")
+points((length(temp.train)+1):(length(temp.train)+12), pred$pred, col="red")
+
+#time series prediction plot with test data points
+ts.plot(temp.train, xlim = c(850,length(temp.train)+12), ylim = c(60,max(U)), main = "")
+title(main = c("Timeseries of Monthly Average Temperature Training Set,", "Plotted Points of Monthly Average Temperature Test Set,", "and Prediction of Monthly Average Temperature Test Set"), line = c(1, 3))
+lines(U, col="blue", lty="dashed")
+lines(L, col="blue", lty="dashed")
+points((length(temp.train)+1):(length(temp.train)+12), temp.test, col="dark green")
+points((length(temp.train)+1):(length(temp.train)+12), pred$pred, col="red")
+```
+
+$\LARGE{\textbf{Conclusion}}$
+
+chosen model formula: $(1+0.5513B+0.4573B^2+0.5310B^3+0.5008B^4+0.5618B^5+0.4689B^6+0.5032B^7+0.5793B^8+0.4978B^9+0.4649B^{10}+0.3897B^{11}-0.2662B^{12}-0.0802B^{13})(1+0.1264B^{12}+0.1505B^{24})X_t = (1-0.3664B^{12})Z_t$
+
+My initial goal was to accurately predict the average daily maximum temperature of the last 12 months of the given data set in order to confidently predict the average daily maximum temperature of future months. I was able to forecast the test data within the the prediction intervals and accurately predict the average daily maximum temperature of several months; however, the largest difference in prediction and test data is approximately 7 degrees Fahrenheit. Due to the significance of this difference, I would not promote future predictions using the chosen model to industry or the general public as consistently accurate; however, I believe that more consistently accurate predictions could be made using a similar model obtained by modeling the daily maximum temperature and then taking the average of those predictions to acquire a monthly average daily maximum temperature. I believe this strategy would provide more accurate predictions because the local variance of individual days is likely smaller which would facilitate more accurate daily predictions and thus more accurate monthly averages.
+
+$\LARGE{\textbf{Acknowledgements}}$
+
+Thank you to Dr. Raya Feldman for providing all direction and statistical knowledge utilized in this project.
