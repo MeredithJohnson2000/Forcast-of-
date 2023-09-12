@@ -7,4 +7,4 @@
   - Conducted Box-Pierce tests, Box-Ljung tests, Mcleod-Li tests for model diagnostics
   - Performed Autoregressive residual fitting and analyzed residuals through residual plots
   - Utilized Q-Q plots, ACF and PACF of the residuals, as well as ACF of the residuals squared for further model diagnostics
--Language: R
+- Language: R
